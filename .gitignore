@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+out/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Test output
+coverage/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local environment files (may contain secrets). Examples stay committed.
+.env
+.env.*
+!.env.example
