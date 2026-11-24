@@ -5,7 +5,7 @@ import { createDatabasePool } from "./Support/Database/createDatabasePool.js";
 const config = loadConfig();
 const pool = createDatabasePool(config.database);
 
-const app = bootstrap({
+const app = await bootstrap({
   frontendOrigin: config.frontendOrigin,
   pool,
 });

@@ -24,6 +24,9 @@ temp/
 .DS_Store
 Thumbs.db
 
+# graphify knowledge graph output (local only, never committed)
+graphify-out/
+
 # Local environment files (may contain secrets). Examples stay committed.
 .env
 .env.*

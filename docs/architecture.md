@@ -34,7 +34,8 @@ DDD-inspired structure, not a full DDD implementation.
 | Adaptation | Why |
 |---|---|
 | `MysqlTaskStore` persistence class | There is no ORM. A small class keeps SQL in one place. |
-| Typed functions as Action dependencies (`(task) => Promise<void>`) | Constructor injection without a DI container, and trivial to fake in tests. |
+| awilix container with auto-registration (`Support/Container/`) | Builds Actions and Controllers automatically, like Laravel's service container. |
+| Dependencies typed as `Pick<MysqlTaskStore, "insert">` | An Action asks only for the store methods it uses, so tests can pass a tiny fake. |
 | `Request` files are Zod parsers that return DTOs | They play the role of Laravel's form requests. |
 | `Resource` files are plain mapping functions | They play the role of Laravel's API resources. |
 | Frontend `Domain/` with a feature API client and Zod models | The frontend also needs typed business data, but it gets that data over HTTP. |
@@ -87,13 +88,14 @@ api/src/
 │   ├── Controllers/          one controller per endpoint
 │   ├── Requests/             Zod parsers: unknown input → DTO
 │   ├── Resources/            Task → JSON shape
-│   └── routes.ts
+│   └── routes.ts             the endpoints inside the Tasks feature
 ├── Support/
 │   ├── Config/loadConfig.ts
 │   ├── Database/createDatabasePool.ts
 │   └── Http/                 errorHandler, notFoundHandler, sendError
 ├── app.ts                    builds the Express app (no listener)
-├── bootstrap.ts              composition root: wires store → actions → controllers
+├── bootstrap.ts              builds the container: bindings + auto-registration
+├── routes.ts                 every endpoint group and its URL prefix (like routes/api.php)
 └── server.ts                 loads config, creates pool, listens
 ```
 
@@ -142,9 +144,7 @@ constructor, and operation input goes into `execute()`:
 // api/src/Domain/Tasks/Actions/UpdateTaskAction.ts
 export class UpdateTaskAction {
   constructor(
-    private readonly findTask: (id: string) => Promise<Task | null>,
-    /** Resolves to false when no stored task has the given id. */
-    private readonly saveTask: (task: Task) => Promise<boolean>,
+    private readonly taskStore: Pick<MysqlTaskStore, "findById" | "update">,
   ) {}
 
   async execute(id: string, data: UpdateTaskData): Promise<Task> {
@@ -153,7 +153,7 @@ export class UpdateTaskAction {
       ? undefined
       : normalizeTaskTitle(data.title);
 
-    const existing = await this.findTask(id);
+    const existing = await this.taskStore.findById(id);
 
     if (existing === null) {
       throw new TaskNotFoundError(id);
@@ -167,13 +167,21 @@ export class UpdateTaskAction {
     };
 ```
 
-The dependencies are typed functions, not a repository interface, a base
-class or a DI container. That is enough to swap MySQL for an in-memory map
-in tests (`api/tests/unit/UpdateTaskAction.test.ts`). There is deliberately
-no `TaskService` that collects every operation.
+You never call `new UpdateTaskAction(…)` in application code: the container
+builds it (see [§3.8](#38-the-container-like-laravels-service-container)).
+The parameter **name** `taskStore` tells the container what to inject, and
+the **type** `Pick<MysqlTaskStore, "findById" | "update">` asks only for the
+two methods the Action uses. Tests skip the container and pass a small fake
+(`api/tests/unit/UpdateTaskAction.test.ts`):
+
+```ts
+const action = new UpdateTaskAction({ findById: store.find, update: store.save });
+```
+
+There is deliberately no `TaskService` that collects every operation.
 
 Reads (`list`, `show`) have no Action because they contain no business
-decision. Their controllers receive a read function directly.
+decision. Their controllers receive the store directly.
 
 ### 3.4 Request validation and DTO mapping belong to the application
 
@@ -239,7 +247,7 @@ The store is a small adapter, not a generic repository framework. It lives
 under `Domain/Tasks` because it persists *tasks*. When a second feature
 appears, it gets its own store next to its own domain.
 
-### 3.6 Thin controllers, resources, and the composition root
+### 3.6 Thin controllers and resources
 
 ```ts
 // api/src/Application/Api/Tasks/Controllers/UpdateTaskController.ts
@@ -269,25 +277,106 @@ export function toTaskResource(task: Task): TaskResource {
 }
 ```
 
-All wiring happens in one place:
+### 3.7 Routes: where the URLs are defined
+
+Coming from Laravel, look in two places:
+
+| Laravel | This API | Answers |
+|---|---|---|
+| `routes/api.php` | `src/routes.ts` | Which endpoint groups exist, and under which URL prefix |
+| `Route::prefix('tasks')->group(…)` | `Application/Api/Tasks/routes.ts` | Which endpoints a feature has |
+
+The central file lists every group:
+
+```ts
+// api/src/routes.ts
+export function registerRoutes(app: Express, container: AwilixContainer): void {
+  app.use("/api/tasks", createTaskRoutes(container));
+
+  // Add a new feature here, for example:
+  // app.use("/api/projects", createProjectRoutes(container));
+}
+```
+
+Each feature keeps its own endpoints next to its controllers, so the
+feature stays in one folder. Controllers come from the container, much like
+`[ListTasksController::class, 'handle']` in Laravel:
+
+```ts
+// api/src/Application/Api/Tasks/routes.ts
+router.get("/", controller(ListTasksController).handle);       // GET    /api/tasks
+router.post("/", controller(CreateTaskController).handle);     // POST   /api/tasks
+router.get("/:id", controller(ShowTaskController).handle);     // GET    /api/tasks/:id
+router.patch("/:id", controller(UpdateTaskController).handle); // PATCH  /api/tasks/:id
+router.delete("/:id", controller(DeleteTaskController).handle);// DELETE /api/tasks/:id
+```
+
+### 3.8 The container (like Laravel's service container)
+
+Express has no container of its own, so the API uses
+[awilix](https://github.com/jeffijoe/awilix). It is configured in
+`bootstrap.ts` and does two things:
 
 ```ts
 // api/src/bootstrap.ts
-const taskStore = new MysqlTaskStore(options.pool);
-
-const updateTaskAction = new UpdateTaskAction(
-  (id) => taskStore.findById(id),
-  (task) => taskStore.update(task),
-);
-// …
-return createApp({
-  frontendOrigin: options.frontendOrigin,
-  logger: options.logger ?? console,
-  registerRoutes(app) {
-    app.use("/api/tasks", taskRoutes);
-  },
+const container = createContainer({
+  injectionMode: InjectionMode.CLASSIC,
+  strict: true,
 });
+
+// Explicit bindings: values and implementations the container cannot
+// discover on its own (Laravel: AppServiceProvider::register()).
+container.register({
+  pool: asValue(options.pool),
+  taskStore: asClass(MysqlTaskStore).singleton(),
+});
+
+// Auto-registration: every class in these folders, by class name.
+// A new Action or Controller is available as soon as its file exists.
+await registerClasses(
+  container,
+  [
+    "Domain/*/Actions/*.{ts,js}",
+    "Application/Api/*/Controllers/*.{ts,js}",
+  ],
+  import.meta.dirname,
+);
 ```
+
+**How injection works.** `InjectionMode.CLASSIC` reads constructor
+**parameter names**. Laravel matches the type hint; awilix matches the
+name. The container then builds the whole chain:
+
+```
+CreateTaskController(createTaskAction)
+  └─ CreateTaskAction(taskStore)
+       └─ MysqlTaskStore(pool)
+            └─ pool (the mysql2 pool from server.ts)
+```
+
+**Naming rule.** `registerClasses` registers each exported class under its
+camelCase name: `CreateTaskAction` becomes `createTaskAction`. To receive
+one, name the parameter the same:
+
+```ts
+constructor(private readonly createTaskAction: CreateTaskAction) {}
+```
+
+A typo fails at startup with an awilix "Could not resolve" error that names
+the missing dependency. It never fails later, in the middle of a request.
+
+**Why not tsyringe or InversifyJS?** They match by type the way Laravel
+does, but only through decorators plus `emitDecoratorMetadata`. `tsx`, the
+dev runner, is built on esbuild, which does not emit that metadata, so
+autowiring would work after `tsc` but break in `npm run dev`. awilix needs
+no decorators.
+
+**Lifetimes.** Everything is a singleton, created once and reused. That is
+safe because Actions, Controllers and the store hold no per-request state.
+
+**Tests** usually skip the container and pass fakes straight to the
+constructor. `api/tests/unit/container.test.ts` shows the other option:
+registering a fake `taskStore` in a container and letting it build the rest.
 
 `createApp` (in `app.ts`) adds CORS for the single configured origin, JSON
 parsing, the JSON 404 handler, and the central error handler. `server.ts`
@@ -496,9 +585,10 @@ if (succeeded) {
 **4. Feature API client** (`Domain/Tasks/Api/TasksApi.ts` → `Support/Http/requestJson.ts`).
 It sends `POST http://localhost:4000/api/tasks` with `{"title":"Buy milk"}`.
 
-**5. Express route** (`api/src/Application/Api/Tasks/routes.ts`). CORS lets the request
-through because the origin is `http://localhost:3000`. `express.json()`
-parses the body:
+**5. Express route** (`api/src/routes.ts` → `api/src/Application/Api/Tasks/routes.ts`).
+CORS lets the request through because the origin is `http://localhost:3000`.
+`express.json()` parses the body. `/api/tasks` sends the request to the Tasks
+routes, where `POST /` matches:
 
 ```ts
 router.post("/", controllers.create.handle);
@@ -510,7 +600,8 @@ the shape and returns a `CreateTaskData` DTO.
 
 **7. Domain Action** (`Domain/Tasks/Actions/CreateTaskAction.ts`). It runs
 `normalizeTaskTitle`, builds a `Task` with a new UUID, `completed: false`
-and equal timestamps, and calls the injected `saveTask`.
+and equal timestamps, and calls `this.taskStore.insert(task)`. The container
+injected `taskStore` when it built the Action.
 
 **8. MySQL persistence** (`Domain/Tasks/Persistence/MysqlTaskStore.ts`). `insert()` runs a
 parameterised `INSERT`, with `completed` as `0` and dates written as UTC `DATETIME(3)`.
@@ -557,11 +648,16 @@ Then:
 
 1. Add the table to `docker/mysql/init.sql` for **fresh** databases, and run
    the same SQL by hand on existing ones. `init.sql` is not a migration tool.
-2. Wire the store, actions and controllers in `api/src/bootstrap.ts` and
-   mount `app.use("/api/projects", createProjectRoutes(…))`.
-3. Map new domain exceptions in `Support/Http/errorHandler.ts`.
-4. Write Action tests with in-memory functions, and add integration tests
-   for the store.
+2. Bind the store in `api/src/bootstrap.ts`:
+   `projectStore: asClass(MysqlProjectStore).singleton()`. Actions and
+   Controllers need no registration. The container picks them up from their
+   folders, as long as constructor parameter names match the camelCase class
+   names (`createProjectAction`, `projectStore`).
+3. Add `Application/Api/Projects/routes.ts`, then register its prefix in
+   `api/src/routes.ts`: `app.use("/api/projects", createProjectRoutes(container))`.
+4. Map new domain exceptions in `Support/Http/errorHandler.ts`.
+5. Write Action tests that pass a small fake store, and add integration
+   tests for the real store.
 
 Guidelines:
 

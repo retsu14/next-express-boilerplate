@@ -24,7 +24,7 @@ const pool = createDatabasePool({
 
 const loggedErrors: Array<Record<string, unknown>> = [];
 
-const app = bootstrap({
+const app = await bootstrap({
   frontendOrigin: FRONTEND_ORIGIN,
   pool,
   logger: {

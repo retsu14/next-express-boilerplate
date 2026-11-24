@@ -11,7 +11,7 @@ import { toTaskResource } from "../Resources/TaskResource.js";
 
 export class UpdateTaskController {
   constructor(
-    private readonly updateTask: UpdateTaskAction,
+    private readonly updateTaskAction: UpdateTaskAction,
   ) {}
 
   handle = async (
@@ -22,7 +22,7 @@ export class UpdateTaskController {
     try {
       const id = parseTaskIdParameter(req.params);
       const input = parseUpdateTaskRequest(req.body);
-      const task = await this.updateTask.execute(id, input);
+      const task = await this.updateTaskAction.execute(id, input);
 
       res.json({
         data: toTaskResource(task),

@@ -41,7 +41,7 @@ function inMemoryTasks(initial: Task[]) {
 
 test("renaming preserves the omitted completed value", async () => {
   const store = inMemoryTasks([existingTask({ completed: true })]);
-  const action = new UpdateTaskAction(store.find, store.save);
+  const action = new UpdateTaskAction({ findById: store.find, update: store.save });
 
   const task = await action.execute(TASK_ID, { title: "  Renamed  " });
 
@@ -53,7 +53,7 @@ test("renaming preserves the omitted completed value", async () => {
 
 test("completing preserves the omitted title", async () => {
   const store = inMemoryTasks([existingTask({ completed: false })]);
-  const action = new UpdateTaskAction(store.find, store.save);
+  const action = new UpdateTaskAction({ findById: store.find, update: store.save });
 
   const task = await action.execute(TASK_ID, { completed: true });
 
@@ -63,7 +63,7 @@ test("completing preserves the omitted title", async () => {
 
 test("completed: false reopens a completed task", async () => {
   const store = inMemoryTasks([existingTask({ completed: true })]);
-  const action = new UpdateTaskAction(store.find, store.save);
+  const action = new UpdateTaskAction({ findById: store.find, update: store.save });
 
   const task = await action.execute(TASK_ID, { completed: false });
 
@@ -73,7 +73,7 @@ test("completed: false reopens a completed task", async () => {
 
 test("throws TaskNotFoundError for a missing task", async () => {
   const store = inMemoryTasks([]);
-  const action = new UpdateTaskAction(store.find, store.save);
+  const action = new UpdateTaskAction({ findById: store.find, update: store.save });
 
   await assert.rejects(
     action.execute(TASK_ID, { completed: true }),
@@ -84,10 +84,10 @@ test("throws TaskNotFoundError for a missing task", async () => {
 });
 
 test("throws TaskNotFoundError when the task disappears before saving", async () => {
-  const action = new UpdateTaskAction(
-    async () => existingTask(),
-    async () => false,
-  );
+  const action = new UpdateTaskAction({
+    findById: async () => existingTask(),
+    update: async () => false,
+  });
 
   await assert.rejects(
     action.execute(TASK_ID, { title: "Renamed" }),
@@ -98,13 +98,13 @@ test("throws TaskNotFoundError when the task disappears before saving", async ()
 test("rejects an invalid title without reading or writing", async () => {
   let reads = 0;
   const store = inMemoryTasks([existingTask()]);
-  const action = new UpdateTaskAction(
-    async (id) => {
+  const action = new UpdateTaskAction({
+    findById: async (id) => {
       reads += 1;
       return store.find(id);
     },
-    store.save,
-  );
+    update: store.save,
+  });
 
   await assert.rejects(
     action.execute(TASK_ID, { title: "x".repeat(201) }),
@@ -121,7 +121,7 @@ test("rejects an invalid title without reading or writing", async () => {
 
 test("an update without changes returns the task without writing", async () => {
   const store = inMemoryTasks([existingTask()]);
-  const action = new UpdateTaskAction(store.find, store.save);
+  const action = new UpdateTaskAction({ findById: store.find, update: store.save });
 
   const task = await action.execute(TASK_ID, {});
 

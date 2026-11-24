@@ -1,17 +1,11 @@
+import { asClass, asValue, createContainer, InjectionMode } from "awilix";
 import type { Express } from "express";
 import type { Pool } from "mysql2/promise";
 
 import { createApp } from "./app.js";
-import { CreateTaskController } from "./Application/Api/Tasks/Controllers/CreateTaskController.js";
-import { DeleteTaskController } from "./Application/Api/Tasks/Controllers/DeleteTaskController.js";
-import { ListTasksController } from "./Application/Api/Tasks/Controllers/ListTasksController.js";
-import { ShowTaskController } from "./Application/Api/Tasks/Controllers/ShowTaskController.js";
-import { UpdateTaskController } from "./Application/Api/Tasks/Controllers/UpdateTaskController.js";
-import { createTaskRoutes } from "./Application/Api/Tasks/routes.js";
-import { CreateTaskAction } from "./Domain/Tasks/Actions/CreateTaskAction.js";
-import { DeleteTaskAction } from "./Domain/Tasks/Actions/DeleteTaskAction.js";
-import { UpdateTaskAction } from "./Domain/Tasks/Actions/UpdateTaskAction.js";
 import { MysqlTaskStore } from "./Domain/Tasks/Persistence/MysqlTaskStore.js";
+import { registerRoutes } from "./routes.js";
+import { registerClasses } from "./Support/Container/registerClasses.js";
 import type { ErrorLogger } from "./Support/Http/errorHandler.js";
 
 export type BootstrapOptions = Readonly<{
@@ -21,38 +15,39 @@ export type BootstrapOptions = Readonly<{
 }>;
 
 /**
- * Composition root: the only place that knows how stores, actions and
- * controllers are connected.
+ * Builds the dependency container and the Express app.
+ *
+ * Like Laravel's service container, awilix builds classes for you: a
+ * constructor parameter named `createTaskAction` receives the registered
+ * `createTaskAction` instance, which in turn received its own `taskStore`.
  */
-export function bootstrap(options: BootstrapOptions): Express {
-  const taskStore = new MysqlTaskStore(options.pool);
-
-  const createTaskAction = new CreateTaskAction(
-    (task) => taskStore.insert(task),
-  );
-
-  const updateTaskAction = new UpdateTaskAction(
-    (id) => taskStore.findById(id),
-    (task) => taskStore.update(task),
-  );
-
-  const deleteTaskAction = new DeleteTaskAction(
-    (id) => taskStore.delete(id),
-  );
-
-  const taskRoutes = createTaskRoutes({
-    list: new ListTasksController(() => taskStore.findAll()),
-    show: new ShowTaskController((id) => taskStore.findById(id)),
-    create: new CreateTaskController(createTaskAction),
-    update: new UpdateTaskController(updateTaskAction),
-    delete: new DeleteTaskController(deleteTaskAction),
+export async function bootstrap(options: BootstrapOptions): Promise<Express> {
+  const container = createContainer({
+    injectionMode: InjectionMode.CLASSIC,
+    strict: true,
   });
+
+  // Explicit bindings: values and implementations the container cannot
+  // discover on its own (Laravel: AppServiceProvider::register()).
+  container.register({
+    pool: asValue(options.pool),
+    taskStore: asClass(MysqlTaskStore).singleton(),
+  });
+
+  // Auto-registration: every class in these folders, by class name.
+  // A new Action or Controller is available as soon as its file exists.
+  await registerClasses(
+    container,
+    [
+      "Domain/*/Actions/*.{ts,js}",
+      "Application/Api/*/Controllers/*.{ts,js}",
+    ],
+    import.meta.dirname,
+  );
 
   return createApp({
     frontendOrigin: options.frontendOrigin,
     logger: options.logger ?? console,
-    registerRoutes(app) {
-      app.use("/api/tasks", taskRoutes);
-    },
+    registerRoutes: (app) => registerRoutes(app, container),
   });
 }

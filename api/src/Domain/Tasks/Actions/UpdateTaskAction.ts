@@ -1,13 +1,12 @@
 import type { UpdateTaskData } from "../DataTransferObjects/UpdateTaskData.js";
 import { TaskNotFoundError } from "../Exceptions/TaskNotFoundError.js";
 import type { Task } from "../Models/Task.js";
+import type { MysqlTaskStore } from "../Persistence/MysqlTaskStore.js";
 import { normalizeTaskTitle } from "../Rules/normalizeTaskTitle.js";
 
 export class UpdateTaskAction {
   constructor(
-    private readonly findTask: (id: string) => Promise<Task | null>,
-    /** Resolves to false when no stored task has the given id. */
-    private readonly saveTask: (task: Task) => Promise<boolean>,
+    private readonly taskStore: Pick<MysqlTaskStore, "findById" | "update">,
   ) {}
 
   async execute(id: string, data: UpdateTaskData): Promise<Task> {
@@ -16,7 +15,7 @@ export class UpdateTaskAction {
       ? undefined
       : normalizeTaskTitle(data.title);
 
-    const existing = await this.findTask(id);
+    const existing = await this.taskStore.findById(id);
 
     if (existing === null) {
       throw new TaskNotFoundError(id);
@@ -33,7 +32,8 @@ export class UpdateTaskAction {
       updatedAt: new Date(),
     };
 
-    const stored = await this.saveTask(updated);
+    // update() resolves to false when no stored task has this id.
+    const stored = await this.taskStore.update(updated);
 
     if (!stored) {
       // The task was deleted between reading and writing it.

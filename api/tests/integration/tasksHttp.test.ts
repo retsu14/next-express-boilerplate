@@ -7,7 +7,7 @@ import { bootstrap } from "../../src/bootstrap.js";
 import { clearTasks, createTestPool } from "./testDatabase.js";
 
 const pool = createTestPool();
-const app = bootstrap({ frontendOrigin: "http://localhost:3000", pool });
+const app = await bootstrap({ frontendOrigin: "http://localhost:3000", pool });
 
 beforeEach(() => clearTasks(pool));
 after(() => pool.end());

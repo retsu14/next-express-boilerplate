@@ -10,7 +10,7 @@ import { toTaskResource } from "../Resources/TaskResource.js";
 
 export class CreateTaskController {
   constructor(
-    private readonly createTask: CreateTaskAction,
+    private readonly createTaskAction: CreateTaskAction,
   ) {}
 
   handle = async (
@@ -20,7 +20,7 @@ export class CreateTaskController {
   ): Promise<void> => {
     try {
       const input = parseCreateTaskRequest(req.body);
-      const task = await this.createTask.execute(input);
+      const task = await this.createTaskAction.execute(input);
 
       res.status(201).json({
         data: toTaskResource(task),

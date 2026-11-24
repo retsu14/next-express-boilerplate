@@ -9,7 +9,7 @@ import { parseTaskIdParameter } from "../Requests/TaskIdParameter.js";
 
 export class DeleteTaskController {
   constructor(
-    private readonly deleteTask: DeleteTaskAction,
+    private readonly deleteTaskAction: DeleteTaskAction,
   ) {}
 
   handle = async (
@@ -19,7 +19,7 @@ export class DeleteTaskController {
   ): Promise<void> => {
     try {
       const id = parseTaskIdParameter(req.params);
-      await this.deleteTask.execute(id);
+      await this.deleteTaskAction.execute(id);
 
       res.status(204).end();
     } catch (error: unknown) {

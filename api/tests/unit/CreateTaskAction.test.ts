@@ -8,8 +8,10 @@ import type { Task } from "../../src/Domain/Tasks/Models/Task.js";
 test("trims the title and creates an incomplete task", async () => {
   const savedTasks: Task[] = [];
 
-  const action = new CreateTaskAction(async (task) => {
-    savedTasks.push(task);
+  const action = new CreateTaskAction({
+    insert: async (task) => {
+      savedTasks.push(task);
+    },
   });
 
   const task = await action.execute({
@@ -27,8 +29,10 @@ test("trims the title and creates an incomplete task", async () => {
 test("rejects a blank title without writing to storage", async () => {
   let writes = 0;
 
-  const action = new CreateTaskAction(async () => {
-    writes += 1;
+  const action = new CreateTaskAction({
+    insert: async () => {
+      writes += 1;
+    },
   });
 
   await assert.rejects(
@@ -42,8 +46,10 @@ test("rejects a blank title without writing to storage", async () => {
 test("accepts exactly 200 characters and rejects 201", async () => {
   let writes = 0;
 
-  const action = new CreateTaskAction(async () => {
-    writes += 1;
+  const action = new CreateTaskAction({
+    insert: async () => {
+      writes += 1;
+    },
   });
 
   const task = await action.execute({ title: ` ${"a".repeat(200)} ` });
