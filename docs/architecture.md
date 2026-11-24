@@ -34,7 +34,7 @@ DDD-inspired structure, not a full DDD implementation.
 | Adaptation | Why |
 |---|---|
 | `MysqlTaskStore` persistence class | There is no ORM. A small class keeps SQL in one place. |
-| awilix container with auto-registration (`Support/Container/`) | Builds Actions and Controllers automatically, like Laravel's service container. |
+| awilix container with auto-registration (`Support/Container/`) | Builds Actions and Controllers automatically, so nobody wires them by hand. |
 | Dependencies typed as `Pick<MysqlTaskStore, "insert">` | An Action asks only for the store methods it uses, so tests can pass a tiny fake. |
 | `Request` files are Zod parsers that return DTOs | They play the role of Laravel's form requests. |
 | `Resource` files are plain mapping functions | They play the role of Laravel's API resources. |
@@ -84,18 +84,20 @@ api/src/
 │   ├── Models/               Task
 │   ├── Persistence/          MysqlTaskStore
 │   └── Rules/                normalizeTaskTitle
-├── Application/Api/Tasks/
-│   ├── Controllers/          one controller per endpoint
-│   ├── Requests/             Zod parsers: unknown input → DTO
-│   ├── Resources/            Task → JSON shape
-│   └── routes.ts             the endpoints inside the Tasks feature
+├── Application/
+│   ├── Api/Tasks/
+│   │   ├── Controllers/      one controller per endpoint
+│   │   ├── Requests/         Zod parsers: unknown input → DTO
+│   │   └── Resources/        Task → JSON shape
+│   └── Console/RouteList/    `npm run route:list`
 ├── Support/
 │   ├── Config/loadConfig.ts
+│   ├── Container/            registerClasses, resolveClass
 │   ├── Database/createDatabasePool.ts
-│   └── Http/                 errorHandler, notFoundHandler, sendError
+│   └── Http/                 RouteTable, errorHandler, notFoundHandler, sendError
 ├── app.ts                    builds the Express app (no listener)
 ├── bootstrap.ts              builds the container: bindings + auto-registration
-├── routes.ts                 every endpoint group and its URL prefix (like routes/api.php)
+├── routes.ts                 every API endpoint, in one file
 └── server.ts                 loads config, creates pool, listens
 ```
 
@@ -279,39 +281,59 @@ export function toTaskResource(task: Task): TaskResource {
 
 ### 3.7 Routes: where the URLs are defined
 
-Coming from Laravel, look in two places:
-
-| Laravel | This API | Answers |
-|---|---|---|
-| `routes/api.php` | `src/routes.ts` | Which endpoint groups exist, and under which URL prefix |
-| `Route::prefix('tasks')->group(…)` | `Application/Api/Tasks/routes.ts` | Which endpoints a feature has |
-
-The central file lists every group:
+Every endpoint lives in one file, `src/routes.ts`. To see what the API
+offers, read that file from top to bottom:
 
 ```ts
 // api/src/routes.ts
-export function registerRoutes(app: Express, container: AwilixContainer): void {
-  app.use("/api/tasks", createTaskRoutes(container));
+export function registerRoutes(
+  app: Express,
+  container: AwilixContainer,
+): readonly RegisteredRoute[] {
+  const api = new RouteTable(container, "/api");
 
-  // Add a new feature here, for example:
-  // app.use("/api/projects", createProjectRoutes(container));
+  // Tasks
+  api.get("/tasks", ListTasksController);
+  api.post("/tasks", CreateTaskController);
+  api.get("/tasks/:id", ShowTaskController);
+  api.patch("/tasks/:id", UpdateTaskController);
+  api.delete("/tasks/:id", DeleteTaskController);
+
+  api.mount(app);
+
+  return api.routes;
 }
 ```
 
-Each feature keeps its own endpoints next to its controllers, so the
-feature stays in one folder. Controllers come from the container, much like
-`[ListTasksController::class, 'handle']` in Laravel:
+`RouteTable` (`Support/Http/RouteTable.ts`) takes each controller from the
+container with its dependencies already built (see [§3.8](#38-the-container))
+and registers its `handle` method with Express. It also remembers every
+route, because Express cannot reliably report the full paths of routes
+inside mounted routers. Routes are the one place where features meet: the
+controllers themselves still live in their feature folders.
 
-```ts
-// api/src/Application/Api/Tasks/routes.ts
-router.get("/", controller(ListTasksController).handle);       // GET    /api/tasks
-router.post("/", controller(CreateTaskController).handle);     // POST   /api/tasks
-router.get("/:id", controller(ShowTaskController).handle);     // GET    /api/tasks/:id
-router.patch("/:id", controller(UpdateTaskController).handle); // PATCH  /api/tasks/:id
-router.delete("/:id", controller(DeleteTaskController).handle);// DELETE /api/tasks/:id
+**Listing routes.** `npm run route:list` prints every route as plain text,
+one per line, so it can be searched with `grep` or `findstr`:
+
+```
+$ npm run -s route:list
+METHOD    PATH            CONTROLLER
+GET|HEAD  /api/tasks      ListTasksController
+POST      /api/tasks      CreateTaskController
+GET|HEAD  /api/tasks/:id  ShowTaskController
+PATCH     /api/tasks/:id  UpdateTaskController
+DELETE    /api/tasks/:id  DeleteTaskController
+
+Showing 5 routes.
 ```
 
-### 3.8 The container (like Laravel's service container)
+The command lives in `Application/Console/RouteList/`, because a console
+command is another application using the same domain, alongside
+`Application/Api/`. It builds the same container as the HTTP server
+(`buildContainer` in `bootstrap.ts`), but it never opens a database
+connection and needs no environment variables.
+
+### 3.8 The container
 
 Express has no container of its own, so the API uses
 [awilix](https://github.com/jeffijoe/awilix). It is configured in
@@ -325,7 +347,7 @@ const container = createContainer({
 });
 
 // Explicit bindings: values and implementations the container cannot
-// discover on its own (Laravel: AppServiceProvider::register()).
+// discover on its own.
 container.register({
   pool: asValue(options.pool),
   taskStore: asClass(MysqlTaskStore).singleton(),
@@ -344,8 +366,7 @@ await registerClasses(
 ```
 
 **How injection works.** `InjectionMode.CLASSIC` reads constructor
-**parameter names**. Laravel matches the type hint; awilix matches the
-name. The container then builds the whole chain:
+**parameter names**, not types. The container then builds the whole chain:
 
 ```
 CreateTaskController(createTaskAction)
@@ -365,8 +386,8 @@ constructor(private readonly createTaskAction: CreateTaskAction) {}
 A typo fails at startup with an awilix "Could not resolve" error that names
 the missing dependency. It never fails later, in the middle of a request.
 
-**Why not tsyringe or InversifyJS?** They match by type the way Laravel
-does, but only through decorators plus `emitDecoratorMetadata`. `tsx`, the
+**Why not tsyringe or InversifyJS?** They match dependencies by type, but
+only through decorators plus `emitDecoratorMetadata`. `tsx`, the
 dev runner, is built on esbuild, which does not emit that metadata, so
 autowiring would work after `tsc` but break in `npm run dev`. awilix needs
 no decorators.
@@ -585,13 +606,12 @@ if (succeeded) {
 **4. Feature API client** (`Domain/Tasks/Api/TasksApi.ts` → `Support/Http/requestJson.ts`).
 It sends `POST http://localhost:4000/api/tasks` with `{"title":"Buy milk"}`.
 
-**5. Express route** (`api/src/routes.ts` → `api/src/Application/Api/Tasks/routes.ts`).
-CORS lets the request through because the origin is `http://localhost:3000`.
-`express.json()` parses the body. `/api/tasks` sends the request to the Tasks
-routes, where `POST /` matches:
+**5. Express route** (`api/src/routes.ts`). CORS lets the request through
+because the origin is `http://localhost:3000`. `express.json()` parses the
+body, and this route matches:
 
 ```ts
-router.post("/", controllers.create.handle);
+api.post("/tasks", CreateTaskController);
 ```
 
 **6. Controller and request parsing** (`Controllers/CreateTaskController.ts`,
@@ -635,7 +655,7 @@ api/src/Domain/Projects/
   Actions/CreateProjectAction.ts
   Persistence/MysqlProjectStore.ts
 api/src/Application/Api/Projects/
-  Controllers/  Requests/  Resources/  routes.ts
+  Controllers/  Requests/  Resources/
 
 frontend/src/Domain/Projects/
   Models/Project.ts  DataTransferObjects/  Api/ProjectsApi.ts
@@ -653,8 +673,8 @@ Then:
    Controllers need no registration. The container picks them up from their
    folders, as long as constructor parameter names match the camelCase class
    names (`createProjectAction`, `projectStore`).
-3. Add `Application/Api/Projects/routes.ts`, then register its prefix in
-   `api/src/routes.ts`: `app.use("/api/projects", createProjectRoutes(container))`.
+3. Add the endpoints to `api/src/routes.ts` under a `// Projects` comment,
+   e.g. `api.get("/projects", ListProjectsController)`.
 4. Map new domain exceptions in `Support/Http/errorHandler.ts`.
 5. Write Action tests that pass a small fake store, and add integration
    tests for the real store.

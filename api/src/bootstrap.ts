@@ -1,4 +1,10 @@
-import { asClass, asValue, createContainer, InjectionMode } from "awilix";
+import {
+  asClass,
+  asValue,
+  createContainer,
+  InjectionMode,
+  type AwilixContainer,
+} from "awilix";
 import type { Express } from "express";
 import type { Pool } from "mysql2/promise";
 
@@ -17,20 +23,34 @@ export type BootstrapOptions = Readonly<{
 /**
  * Builds the dependency container and the Express app.
  *
- * Like Laravel's service container, awilix builds classes for you: a
- * constructor parameter named `createTaskAction` receives the registered
- * `createTaskAction` instance, which in turn received its own `taskStore`.
+ * The awilix container builds classes for you: a constructor parameter
+ * named `createTaskAction` receives the registered `createTaskAction`
+ * instance, which in turn received its own `taskStore`.
  */
 export async function bootstrap(options: BootstrapOptions): Promise<Express> {
+  const container = await buildContainer(options.pool);
+
+  return createApp({
+    frontendOrigin: options.frontendOrigin,
+    logger: options.logger ?? console,
+    registerRoutes: (app) => registerRoutes(app, container),
+  });
+}
+
+/**
+ * The dependency container on its own, without the Express app. Shared by
+ * the HTTP server and console commands such as `npm run route:list`.
+ */
+export async function buildContainer(pool: Pool): Promise<AwilixContainer> {
   const container = createContainer({
     injectionMode: InjectionMode.CLASSIC,
     strict: true,
   });
 
   // Explicit bindings: values and implementations the container cannot
-  // discover on its own (Laravel: AppServiceProvider::register()).
+  // discover on its own.
   container.register({
-    pool: asValue(options.pool),
+    pool: asValue(pool),
     taskStore: asClass(MysqlTaskStore).singleton(),
   });
 
@@ -45,9 +65,5 @@ export async function bootstrap(options: BootstrapOptions): Promise<Express> {
     import.meta.dirname,
   );
 
-  return createApp({
-    frontendOrigin: options.frontendOrigin,
-    logger: options.logger ?? console,
-    registerRoutes: (app) => registerRoutes(app, container),
-  });
+  return container;
 }

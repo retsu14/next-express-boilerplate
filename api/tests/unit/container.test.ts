@@ -15,7 +15,7 @@ const SRC = fileURLToPath(new URL("../../src", import.meta.url));
 async function containerWithFakeStore(saved: Task[]) {
   const container = createContainer({ injectionMode: InjectionMode.CLASSIC, strict: true });
 
-  // Swap the MySQL store for an in-memory fake, like binding a fake in Laravel.
+  // Swap the MySQL store for an in-memory fake.
   container.register({
     taskStore: asValue({
       insert: async (task: Task) => {

@@ -5,8 +5,8 @@ import { asClass, listModules, type AwilixContainer } from "awilix";
 import { containerName } from "./containerName.js";
 
 /**
- * Auto-registration, similar to how Laravel's container can build any class
- * without being told about it first.
+ * Auto-registration: new classes become injectable just by living in a
+ * matching folder, with no registration code to write.
  *
  * Finds the files matching `patterns` (relative to `cwd`), imports them and
  * registers every exported class under its camelCase class name as a

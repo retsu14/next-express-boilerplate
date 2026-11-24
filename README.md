@@ -121,6 +121,44 @@ The integration tests use `TEST_DB_NAME=app_test`. They refuse to run
 unless the name ends in `_test` and is different from `DB_NAME`, and they
 delete rows only in that test database.
 
+## Listing API routes
+
+`route:list` prints every API endpoint with its HTTP method and controller.
+It needs no database. `-s` hides npm's own header lines.
+
+```bash
+docker compose exec api npm run -s route:list
+```
+
+```
+METHOD    PATH            CONTROLLER
+GET|HEAD  /api/tasks      ListTasksController
+POST      /api/tasks      CreateTaskController
+GET|HEAD  /api/tasks/:id  ShowTaskController
+PATCH     /api/tasks/:id  UpdateTaskController
+DELETE    /api/tasks/:id  DeleteTaskController
+
+Showing 5 routes.
+```
+
+Each route is one plain-text line, so you can search the output:
+
+```bash
+docker compose exec api npm run -s route:list | grep tasks       # Linux, macOS, Git Bash
+docker compose exec api npm run -s route:list | findstr tasks    # Windows cmd / PowerShell
+```
+
+Built-in filters, and JSON for scripts:
+
+```bash
+docker compose exec api npm run -s route:list -- --method=GET    # GET also matches HEAD
+docker compose exec api npm run -s route:list -- --path=:id      # path contains ":id"
+docker compose exec api npm run -s route:list -- --json
+```
+
+Inside `api/` on your machine, the same commands work without the
+`docker compose exec api` prefix.
+
 ## Building both projects
 
 ```bash
